@@ -1,0 +1,22 @@
+# Default values for allowed-registries-policy.
+
+internalRegistries:
+  - "internal.registry.io"
+  - "my-private-repo.local"
+
+# ConfigMap data structure matching user request
+allowedRegistries:
+  docker.io:
+    - library
+    - prometheus
+    - grafana
+  quay.io:
+    - coreos
+    - openshift
+  ghcr.io:
+    - myorg
+    - github
+
+policy:
+  validationFailureAction: Enforce
+  background: true

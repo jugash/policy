@@ -1,0 +1,49 @@
+{{- $internalRegistries := .Values.internalRegistries }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-external-images
+  annotations:
+    policies.kyverno.io/title: Restrict External Images
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      This policy restricts images to come from authorized external registries and organizations,
+      while allowing defined internal registries by default.
+spec:
+  validationFailureAction: {{ .Values.policy.validationFailureAction }}
+  background: {{ .Values.policy.background }}
+  rules:
+    - name: check-image-registry
+      match:
+        any:
+        - resources:
+            kinds:
+              - Pod
+      # Precondition: Skip validation (allow) if image is from internal registry
+      # We iterate over containers, so we check this per-image in the foreach loop below.
+      context: 
+        - name: registriesData
+          configMap:
+            name: allowed-registries
+            namespace: kyverno
+            key: registries
+      validate:
+        foreach:
+          - list: "request.object.spec.containers"
+            preconditions:
+              all:
+              - key: "{{ "{{" }} image_registry(element.image) }}"
+                operator: AnyNotIn
+                value: {{ $internalRegistries | toJson }}
+            validate:
+              message: "Image {{ "{{" }} element.image }} is not from an allowed external registry or organization."
+              deny:
+                conditions:
+                  all:
+                  # Check if the registry exists in the ConfigMap and if the repository's first path component (org) is in the allowed list.
+                  # If the registry is not in the ConfigMap, the lookup returns null, defaulting to empty list [], causing validation to fail (Deny).
+                  - key: "{{ "{{" }} (parse_yaml(registriesData)[image_registry(element.image)] || `[]`) | contains(@, split(image_repository(element.image), '/')[0]) }}"
+                    operator: Equals
+                    value: false
+
