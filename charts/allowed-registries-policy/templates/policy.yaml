@@ -31,9 +31,10 @@ spec:
       validate:
         foreach:
           - list: "request.object.spec.containers"
+            # Preconditions to skip internal registries
             preconditions:
               all:
-              - key: "{{ "{{" }} image_registry(element.image) }}"
+              - key: "{{ "{{" }} to_string(element.image) | split(@, '/') | [0] | (contains(@, '.') || contains(@, ':') || @ == 'localhost') && @ || 'docker.io' }}"
                 operator: AnyNotIn
                 value: {{ $internalRegistries | toJson }}
             validate:
@@ -41,9 +42,20 @@ spec:
               deny:
                 conditions:
                   all:
-                  # Check if the registry exists in the ConfigMap and if the repository's first path component (org) is in the allowed list.
-                  # If the registry is not in the ConfigMap, the lookup returns null, defaulting to empty list [], causing validation to fail (Deny).
-                  - key: "{{ "{{" }} (parse_yaml(registriesData)[image_registry(element.image)] || `[]`) | contains(@, split(image_repository(element.image), '/')[0]) }}"
-                    operator: Equals
-                    value: false
+                  # Variable definition for readability and reuse logic in deny block
+                  - variable: image_registry
+                    key: "{{ "{{" }} to_string(element.image) | split(@, '/') | [0] | (contains(@, '.') || contains(@, ':') || @ == 'localhost') && @ || 'docker.io' }}"
+                  
+                  - variable: image_repo_path
+                    # If registry was implicit (docker.io), the repo path is the full image string.
+                    # If explicit, it is everything after the first slash.
+                    key: "{{ "{{" }} image_registry == 'docker.io' && !contains(split(element.image, '/')[0], '.') && !contains(split(element.image, '/')[0], ':') && split(element.image, '/')[0] != 'localhost' && element.image || join('/', split(element.image, '/')[1:]) }}"
 
+                  - variable: image_org
+                    # Normalize 'library' for docker.io if no slash in repo path
+                    key: "{{ "{{" }} image_registry == 'docker.io' && !contains(image_repo_path, '/') && 'library' || split(image_repo_path, '/')[0] }}"
+                  
+                  # Check if the registry exists in the ConfigMap AND the organization is allowed
+                  - key: "{{ "{{" }} (parse_yaml(registriesData)[image_registry] || `[]`) | contains(@, image_org) }}"
+                    operator: Equals
+                    value: true
